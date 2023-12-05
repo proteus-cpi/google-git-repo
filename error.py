@@ -121,7 +121,15 @@ class UploadError(RepoError):
     def __str__(self):
         return self.reason
 
+class PushError(RepoError):
+    """A bundle push to remote did not succeed."""
 
+    def __init__(self, reason, **kwargs):
+        super().__init__(reason, **kwargs)
+        self.reason = reason
+
+    def __str__(self):
+        return self.reason
 class DownloadError(RepoExitError):
     """Cannot download a repository."""
 

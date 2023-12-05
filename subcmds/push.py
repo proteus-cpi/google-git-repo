@@ -1,4 +1,3 @@
-#
 # Copyright (C) 2008 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,385 +12,812 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import print_function
 import copy
+import functools
+import optparse
 import re
 import sys
+from typing import List
 
+from command import DEFAULT_LOCAL_JOBS
 from command import InteractiveCommand
 from editor import Editor
-from error import GitError, HookError, UploadError
+from error import GitError
+from error import SilentRepoExitError
+from error import PushError
 from git_command import GitCommand
+from git_refs import R_HEADS
 from hooks import RepoHook
+from project import ReviewableBranch
+from repo_logging import RepoLogger
+from subcmds.sync import LocalSyncState
 
-from git_refs import GitRefs, HEAD, R_HEADS, R_TAGS, R_PUB, R_M
 
-unicode = str
+_DEFAULT_UNUSUAL_COMMIT_THRESHOLD = 5
+logger = RepoLogger(__file__)
 
 
-UNUSUAL_COMMIT_THRESHOLD = 5
+class PushExitError(SilentRepoExitError):
+    """Indicates that there is an push command error requiring a sys exit."""
 
-def _ConfirmManyPushs(multiple_branches=False):
-  if multiple_branches:
-    print('ATTENTION: One or more branches has an unusually high number '
-          'of commits.')
-  else:
-    print('ATTENTION: You are pushing an unusually high number of commits.')
-  print('YOU PROBABLY DO NOT MEAN TO DO THIS. (Did you rebase across '
-        'branches?)')
-  answer = input("If you are sure you intend to do this, type 'yes': ").strip()
-  return answer == "yes"
+
+def _VerifyPendingCommits(branches: List[ReviewableBranch]) -> bool:
+    """Perform basic safety checks on the given set of branches.
+
+    Ensures that each branch does not have a "large" number of commits
+    and, if so, prompts the user to confirm they want to proceed with
+    the push.
+
+    Returns true if all branches pass the safety check or the user
+    confirmed. Returns false if the push should be aborted.
+    """
+
+    # Determine if any branch has a suspicious number of commits.
+    many_commits = False
+    for branch in branches:
+        # Get the user's unusual threshold for the branch.
+        #
+        # Each branch may be configured to have a different threshold.
+        remote = branch.project.GetBranch(branch.name).remote
+        key = f"review.{remote.review}.pushwarningthreshold"
+        threshold = branch.project.config.GetInt(key)
+        if threshold is None:
+            threshold = _DEFAULT_UNUSUAL_COMMIT_THRESHOLD
+
+        # If the branch has more commits than the threshold, show a warning.
+        if len(branch.commits) > threshold:
+            many_commits = True
+            break
+
+    # If any branch has many commits, prompt the user.
+    if many_commits:
+        if len(branches) > 1:
+            logger.warning(
+                "ATTENTION: One or more branches has an unusually high number "
+                "of commits."
+            )
+        else:
+            logger.warning(
+                "ATTENTION: You are pushing an unusually high number of "
+                "commits."
+            )
+        logger.warning(
+            "YOU PROBABLY DO NOT MEAN TO DO THIS. (Did you rebase across "
+            "branches?)"
+        )
+        answer = input(
+            "If you are sure you intend to do this, type 'yes': "
+        ).strip()
+        return answer == "yes"
+
+    return True
+
 
 def _die(fmt, *args):
-  msg = fmt % args
-  print('error: %s' % msg, file=sys.stderr)
-  sys.exit(1)
+    msg = fmt % args
+    logger.error("error: %s", msg)
+    raise PushExitError(msg)
+
+
+def _SplitEmails(values):
+    result = []
+    for value in values:
+        result.extend([s.strip() for s in value.split(",")])
+    return result
+
 
 class Push(InteractiveCommand):
-  common = True
-  helpSummary = "Push changes (bypass code review)"
-  helpUsage = """
-%prog [<project>]...
+    COMMON = True
+    helpSummary = "Push changes for code review"
+    helpUsage = """
+%prog [--re --cc] [<project>]...
 """
-  helpDescription = """
-The '%prog' command is used to push changes to its remote branch.
-It searches for topic branches in local projects that have not yet
-been pushed (or published for review).  If multiple topic branches
-are found, '%prog' opens an editor to allow the user to select
-which branches to push.
+    helpDescription = """
+The '%prog' command is used to send changes to the Gerrit Code
+Review system.  It searches for topic branches in local projects
+that have not yet been published for review.  If multiple topic
+branches are found, '%prog' opens an editor to allow the user to
+select which branches to push.
 
 '%prog' searches for pushable changes in all projects listed at
 the command line.  Projects can be specified either by name, or by
 a relative or absolute path to the project's local directory. If no
-projects are specified, '%prog' will search for pushadable changes
+projects are specified, '%prog' will search for pushable changes
 in all projects listed in the manifest.
 
+If the --reviewers or --cc options are passed, those emails are
+added to the respective list of users, and emails are sent to any
+new users.  Users passed as --reviewers must already be registered
+with the code review system, or the push will fail.
+
+While most normal Gerrit options have dedicated command line options,
+direct access to the Gerit options is available via --push-options.
+This is useful when Gerrit has newer functionality that %prog doesn't
+yet support, or doesn't have plans to support.  See the Push Options
+documentation for more details:
+https://gerrit-review.googlesource.com/Documentation/user-push.html#push_options
+
+# Configuration
+
+review.URL.autopush:
+
+To disable the "Push ... (y/N)?" prompt, you can set a per-project
+or global Git configuration option.  If review.URL.autopush is set
+to "true" then repo will assume you always answer "y" at the prompt,
+and will not prompt you further.  If it is set to "false" then repo
+will assume you always answer "n", and will abort.
+
+review.URL.autoreviewer:
+
+To automatically append a user or mailing list to reviews, you can set
+a per-project or global Git option to do so.
+
+review.URL.autocopy:
+
+To automatically copy a user or mailing list to all pushed reviews,
+you can set a per-project or global Git option to do so. Specifically,
+review.URL.autocopy can be set to a comma separated list of reviewers
+who you always want copied on all pushs with a non-empty --re
+argument.
+
+review.URL.username:
+
+Override the username used to connect to Gerrit Code Review.
+By default the local part of the email address is used.
+
+The URL must match the review URL listed in the manifest XML file,
+or in the .git/config within the project.  For example:
+
+  [remote "origin"]
+    url = git://git.example.com/project.git
+    review = http://review.example.com/
+
+  [review "http://review.example.com/"]
+    autopush = true
+    autocopy = johndoe@company.com,my-team-alias@company.com
+
+review.URL.pushtopic:
+
+To add a topic branch whenever pushing a commit, you can set a
+per-project or global Git option to do so. If review.URL.pushtopic
+is set to "true" then repo will assume you always want the equivalent
+of the -t option to the repo command. If unset or set to "false" then
+repo will make use of only the command line option.
+
+review.URL.pushhashtags:
+
+To add hashtags whenever pushing a commit, you can set a per-project
+or global Git option to do so. The value of review.URL.pushhashtags
+will be used as comma delimited hashtags like the --hashtag option.
+
+review.URL.pushlabels:
+
+To add labels whenever pushing a commit, you can set a per-project
+or global Git option to do so. The value of review.URL.pushlabels
+will be used as comma delimited labels like the --label option.
+
+review.URL.pushnotify:
+
+Control e-mail notifications when pushing.
+https://gerrit-review.googlesource.com/Documentation/user-push.html#notify
+
+review.URL.pushwarningthreshold:
+
+Repo will warn you if you are attempting to push a large number
+of commits in one or more branches. By default, the threshold
+is five commits. This option allows you to override the warning
+threshold to a different value.
+
+# References
+
+Gerrit Code Review:  https://www.gerritcodereview.com/
+
 """
+    PARALLEL_JOBS = DEFAULT_LOCAL_JOBS
 
-  def _Options(self, p):
-    p.add_option('--br',
-                 type='string',  action='store', dest='branch',
-                 help='Branch to push.')
-    p.add_option('--cbr', '--current-branch',
-                 dest='current_branch', action='store_true',
-                 help='Push current git branch.')
-    p.add_option('-D', '--destination', '--dest',
-                 type='string', action='store', dest='dest_branch',
-                 metavar='BRANCH',
-                 help='Push on this target branch.')
-    p.add_option('-f', '--force',
-                 dest='force_push',
-                 action='store_true',
-                 help='Force push')
+    def _Options(self, p):
+        p.add_option(
+            "-t",
+            dest="auto_topic",
+            action="store_true",
+            help="send local branch name to Gerrit Code Review",
+        )
+        p.add_option(
+            "--hashtag",
+            "--ht",
+            dest="hashtags",
+            action="append",
+            default=[],
+            help="add hashtags (comma delimited) to the review",
+        )
+        p.add_option(
+            "--hashtag-branch",
+            "--htb",
+            action="store_true",
+            help="add local branch name as a hashtag",
+        )
+        p.add_option(
+            "-l",
+            "--label",
+            dest="labels",
+            action="append",
+            default=[],
+            help="add a label when pushing",
+        )
+        p.add_option(
+            "--re",
+            "--reviewers",
+            type="string",
+            action="append",
+            dest="reviewers",
+            help="request reviews from these people",
+        )
+        p.add_option(
+            "--cc",
+            type="string",
+            action="append",
+            dest="cc",
+            help="also send email to these email addresses",
+        )
+        p.add_option(
+            "--br",
+            "--branch",
+            type="string",
+            action="store",
+            dest="branch",
+            help="(local) branch to push",
+        )
+        p.add_option(
+            "-c",
+            "--current-branch",
+            dest="current_branch",
+            action="store_true",
+            help="push current git branch",
+        )
+        p.add_option(
+            "--no-current-branch",
+            dest="current_branch",
+            action="store_false",
+            help="push all git branches",
+        )
+        # Turn this into a warning & remove this someday.
+        p.add_option(
+            "--cbr",
+            dest="current_branch",
+            action="store_true",
+            help=optparse.SUPPRESS_HELP,
+        )
+        p.add_option(
+            "--ne",
+            "--no-emails",
+            action="store_false",
+            dest="notify",
+            default=True,
+            help="do not send e-mails on push",
+        )
+        p.add_option(
+            "-p",
+            "--private",
+            action="store_true",
+            dest="private",
+            default=False,
+            help="push as a private change (deprecated; use --wip)",
+        )
+        p.add_option(
+            "-w",
+            "--wip",
+            action="store_true",
+            dest="wip",
+            default=False,
+            help="push as a work-in-progress change",
+        )
+        p.add_option(
+            "-r",
+            "--ready",
+            action="store_true",
+            default=False,
+            help="mark change as ready (clears work-in-progress setting)",
+        )
+        p.add_option(
+            "-o",
+            "--push-option",
+            type="string",
+            action="append",
+            dest="push_options",
+            default=[],
+            help="additional push options to transmit",
+        )
+        p.add_option(
+            "-D",
+            "--destination",
+            "--dest",
+            type="string",
+            action="store",
+            dest="dest_branch",
+            metavar="BRANCH",
+            help="submit for review on this target branch",
+        )
+        p.add_option(
+            "-n",
+            "--dry-run",
+            dest="dryrun",
+            default=False,
+            action="store_true",
+            help="do everything except actually push the CL",
+        )
+        p.add_option(
+            "-y",
+            "--yes",
+            default=False,
+            action="store_true",
+            help="answer yes to all safe prompts",
+        )
+        p.add_option(
+            "--ignore-untracked-files",
+            action="store_true",
+            default=False,
+            help="ignore untracked files in the working copy",
+        )
+        p.add_option(
+            "--no-ignore-untracked-files",
+            dest="ignore_untracked_files",
+            action="store_false",
+            help="always ask about untracked files in the working copy",
+        )
+        p.add_option(
+            "--no-cert-checks",
+            dest="validate_certs",
+            action="store_false",
+            default=True,
+            help="disable verifying ssl certs (unsafe)",
+        )
+        RepoHook.AddOptionGroup(p, "pre-push")
 
-    # Options relating to push hook.  Note that verify and no-verify are NOT
-    # opposites of each other, which is why they store to different locations.
-    # We are using them to match 'git commit' syntax.
-    #
-    # Combinations:
-    # - no-verify=False, verify=False (DEFAULT):
-    #   If stdout is a tty, can prompt about running push hooks if needed.
-    #   If user denies running hooks, the push is cancelled.  If stdout is
-    #   not a tty and we would need to prompt about push hooks, push is
-    #   cancelled.
-    # - no-verify=False, verify=True:
-    #   Always run push hooks with no prompt.
-    # - no-verify=True, verify=False:
-    #   Never run push hooks, but push anyway (AKA bypass hooks).
-    # - no-verify=True, verify=True:
-    #   Invalid
-    p.add_option('--no-verify',
-                 dest='bypass_hooks', action='store_true',
-                 help='Do not run the push hook.')
-    p.add_option('--verify',
-                 dest='allow_all_hooks', action='store_true',
-                 help='Run the push hook without prompting.')
-
-  def _SingleBranch(self, opt, branch):
-    project = branch.project
-    name = branch.name
-    remote = project.GetBranch(name).remote
-
-    date = branch.date
-    commit_list = branch.commits
-
-    destination = opt.dest_branch or project.dest_branch or project.revisionExpr
-    print('Push project %s/ to remote branch %s:' % (project.relpath, destination))
-    print('  branch %s (%2d commit%s, %s):' % (
-                  name,
-                  len(commit_list),
-                  len(commit_list) != 1 and 's' or '',
-                  date))
-    for commit in commit_list:
-      print('         %s' % commit)
-
-    sys.stdout.write('to %s (y/N)? ' % remote.name)
-    answer = sys.stdin.readline().strip().lower()
-    answer = answer in ('y', 'yes', '1', 'true', 't')
-
-    if answer:
-      if len(branch.commits) > UNUSUAL_COMMIT_THRESHOLD:
-        answer = _ConfirmManyPushs()
-
-    if answer:
-      self._Push(opt, [branch])
-    else:
-      _die("push aborted by user")
-
-  def _MultipleBranches(self, opt, pending):
-    projects = {}
-    branches = {}
-
-    script = []
-    script.append('# Uncomment the branches to push:')
-    for project, avail in pending:
-      script.append('#')
-      script.append('# project %s/:' % project.relpath)
-
-      b = {}
-      for branch in avail:
-        if branch is None:
-          continue
+    def _SingleBranch(self, opt, branch, people):
+        project = branch.project
         name = branch.name
-        date = branch.date
-        commit_list = branch.commits
+        remote = project.GetBranch(name).remote
 
-        if b:
-          script.append('#')
-        destination = opt.dest_branch or project.dest_branch or project.revisionExpr
-        script.append('#  branch %s (%2d commit%s, %s) to remote branch %s:' % (
-                      name,
-                      len(commit_list),
-                      len(commit_list) != 1 and 's' or '',
-                      date,
-                      destination))
-        for commit in commit_list:
-          script.append('#         %s' % commit)
-        b[name] = branch
+        key = "review.%s.autopush" % remote.review
+        answer = project.config.GetBoolean(key)
 
-      projects[project.relpath] = project
-      branches[project.name] = b
-    script.append('')
+        if answer is False:
+            _die("push blocked by %s = false" % key)
 
-    script = [ x.encode('utf-8')
-             if issubclass(type(x), unicode)
-             else x
-             for x in script ]
+        if answer is None:
+            date = branch.date
+            commit_list = branch.commits
 
-    script = Editor.EditString("\n".join(script)).split("\n")
+            destination = (
+                opt.dest_branch or project.dest_branch or project.revisionExpr
+            )
+            print(
+                "Push project %s/ to remote branch %s%s:"
+                % (
+                    project.RelPath(local=opt.this_manifest_only),
+                    destination,
+                    " (private)" if opt.private else "",
+                )
+            )
+            print(
+                "  branch %s (%2d commit%s, %s):"
+                % (
+                    name,
+                    len(commit_list),
+                    len(commit_list) != 1 and "s" or "",
+                    date,
+                )
+            )
+            for commit in commit_list:
+                print("         %s" % commit)
 
-    project_re = re.compile(r'^#?\s*project\s*([^\s]+)/:$')
-    branch_re = re.compile(r'^\s*branch\s*([^\s(]+)\s*\(.*')
+            print("to %s (y/N)? " % remote.review, end="", flush=True)
+            if opt.yes:
+                print("<--yes>")
+                answer = True
+            else:
+                answer = sys.stdin.readline().strip().lower()
+                answer = answer in ("y", "yes", "1", "true", "t")
+            if not answer:
+                _die("push aborted by user")
 
-    project = None
-    todo = []
+        # Perform some basic safety checks prior to pushing.
+        if not opt.yes and not _VerifyPendingCommits([branch]):
+            _die("push aborted by user")
 
-    for line in script:
-      m = project_re.match(line)
-      if m:
-        name = m.group(1)
-        project = projects.get(name)
-        if not project:
-          _die('project %s not available for push', name)
-        continue
+        self._PushAndReport(opt, [branch], people)
 
-      m = branch_re.match(line)
-      if m:
-        name = m.group(1)
-        if not project:
-          _die('project for branch %s not in script', name)
-        branch = branches[project.name].get(name)
-        if not branch:
-          _die('branch %s not in %s', name, project.relpath)
-        todo.append(branch)
-    if not todo:
-      _die("nothing uncommented for push")
+    def _MultipleBranches(self, opt, pending, people):
+        projects = {}
+        branches = {}
 
-    many_commits = False
-    for branch in todo:
-      if len(branch.commits) > UNUSUAL_COMMIT_THRESHOLD:
-        many_commits = True
-        break
-    if many_commits:
-      if not _ConfirmManyPushs(multiple_branches=True):
-        _die("push aborted by user")
+        script = []
+        script.append("# Uncomment the branches to push:")
+        for project, avail in pending:
+            project_path = project.RelPath(local=opt.this_manifest_only)
+            script.append("#")
+            script.append(f"# project {project_path}/:")
 
-    self._Push(opt, todo)
+            b = {}
+            for branch in avail:
+                if branch is None:
+                    continue
+                name = branch.name
+                date = branch.date
+                commit_list = branch.commits
 
-  def _Push(self, opt, todo):
-    have_errors = False
-    for branch in todo:
-      try:
-        # Check if there are local changes that may have been forgotten
+                if b:
+                    script.append("#")
+                destination = (
+                    opt.dest_branch
+                    or project.dest_branch
+                    or project.revisionExpr
+                )
+                script.append(
+                    "#  branch %s (%2d commit%s, %s) to remote branch %s:"
+                    % (
+                        name,
+                        len(commit_list),
+                        len(commit_list) != 1 and "s" or "",
+                        date,
+                        destination,
+                    )
+                )
+                for commit in commit_list:
+                    script.append("#         %s" % commit)
+                b[name] = branch
+
+            projects[project_path] = project
+            branches[project_path] = b
+        script.append("")
+
+        script = Editor.EditString("\n".join(script)).split("\n")
+
+        project_re = re.compile(r"^#?\s*project\s*([^\s]+)/:$")
+        branch_re = re.compile(r"^\s*branch\s*([^\s(]+)\s*\(.*")
+
+        project = None
+        todo = []
+
+        for line in script:
+            m = project_re.match(line)
+            if m:
+                name = m.group(1)
+                project = projects.get(name)
+                if not project:
+                    _die("project %s not available for push", name)
+                continue
+
+            m = branch_re.match(line)
+            if m:
+                name = m.group(1)
+                if not project:
+                    _die("project for branch %s not in script", name)
+                project_path = project.RelPath(local=opt.this_manifest_only)
+                branch = branches[project_path].get(name)
+                if not branch:
+                    _die("branch %s not in %s", name, project_path)
+                todo.append(branch)
+        if not todo:
+            _die("nothing uncommented for push")
+
+        # Perform some basic safety checks prior to pushing.
+        if not opt.yes and not _VerifyPendingCommits(todo):
+            _die("push aborted by user")
+
+        self._PushAndReport(opt, todo, people)
+
+    def _AppendAutoList(self, branch, people):
+        """
+        Appends the list of reviewers in the git project's config.
+        Appends the list of users in the CC list in the git project's config if
+        a non-empty reviewer list was found.
+        """
+        name = branch.name
+        project = branch.project
+
+        key = "review.%s.autoreviewer" % project.GetBranch(name).remote.review
+        raw_list = project.config.GetString(key)
+        if raw_list is not None:
+            people[0].extend([entry.strip() for entry in raw_list.split(",")])
+
+        key = "review.%s.autocopy" % project.GetBranch(name).remote.review
+        raw_list = project.config.GetString(key)
+        if raw_list is not None and len(people[0]) > 0:
+            people[1].extend([entry.strip() for entry in raw_list.split(",")])
+
+    def _FindGerritChange(self, branch):
+        last_pub = branch.project.WasPublished(branch.name)
+        if last_pub is None:
+            return ""
+
+        refs = branch.GetPublishedRefs()
+        try:
+            # refs/changes/XYZ/N --> XYZ
+            return refs.get(last_pub).split("/")[-2]
+        except (AttributeError, IndexError):
+            return ""
+
+    def _PushBranch(self, opt, branch, original_people):
+        """Push Branch."""
+        people = copy.deepcopy(original_people)
+        self._AppendAutoList(branch, people)
+
+        # Check if there are local changes that may have been forgotten.
         changes = branch.project.UncommitedFiles()
+        if opt.ignore_untracked_files:
+            untracked = set(branch.project.UntrackedFiles())
+            changes = [x for x in changes if x not in untracked]
+
         if changes:
-          sys.stdout.write('Uncommitted changes in ' + branch.project.name)
-          sys.stdout.write(' (did you forget to amend?):\n')
-          sys.stdout.write('\n'.join(changes) + '\n')
-          sys.stdout.write('Continue pushing? (y/N) ')
-          a = sys.stdin.readline().strip().lower()
-          if a not in ('y', 'yes', 't', 'true', 'on'):
-            print("skipping push", file=sys.stderr)
-            branch.uploaded = False
-            branch.error = 'User aborted'
-            continue
+            key = "review.%s.autopush" % branch.project.remote.review
+            answer = branch.project.config.GetBoolean(key)
+
+            # If they want to auto push, let's not ask because it
+            # could be automated.
+            if answer is None:
+                print()
+                print(
+                    "Uncommitted changes in %s (did you forget to "
+                    "amend?):" % branch.project.name
+                )
+                print("\n".join(changes))
+                print("Continue pushing? (y/N) ", end="", flush=True)
+                if opt.yes:
+                    print("<--yes>")
+                    a = "yes"
+                else:
+                    a = sys.stdin.readline().strip().lower()
+                if a not in ("y", "yes", "t", "true", "on"):
+                    print("skipping push", file=sys.stderr)
+                    branch.pushed = False
+                    branch.error = "User aborted"
+                    return
+
+        # Check if topic branches should be sent to the server during
+        # push.
+        if opt.auto_topic is not True:
+            key = "review.%s.pushtopic" % branch.project.remote.review
+            opt.auto_topic = branch.project.config.GetBoolean(key)
+
+        def _ExpandCommaList(value):
+            """Split |value| up into comma delimited entries."""
+            if not value:
+                return
+            for ret in value.split(","):
+                ret = ret.strip()
+                if ret:
+                    yield ret
+
+        # Check if hashtags should be included.
+        key = "review.%s.pushhashtags" % branch.project.remote.review
+        hashtags = set(_ExpandCommaList(branch.project.config.GetString(key)))
+        for tag in opt.hashtags:
+            hashtags.update(_ExpandCommaList(tag))
+        if opt.hashtag_branch:
+            hashtags.add(branch.name)
+
+        # Check if labels should be included.
+        key = "review.%s.pushlabels" % branch.project.remote.review
+        labels = set(_ExpandCommaList(branch.project.config.GetString(key)))
+        for label in opt.labels:
+            labels.update(_ExpandCommaList(label))
+
+        # Handle e-mail notifications.
+        if opt.notify is False:
+            notify = "NONE"
+        else:
+            key = "review.%s.pushnotify" % branch.project.remote.review
+            notify = branch.project.config.GetString(key)
 
         destination = opt.dest_branch or branch.project.dest_branch
 
-        # Make sure our local branch is not setup to track a different remote branch
-        merge_branch = self._GetMergeBranch(branch.project)
-        if destination:
-          full_dest = 'refs/heads/%s' % destination
-          if not opt.dest_branch and merge_branch and merge_branch != full_dest:
-            print('merge branch %s does not match destination branch %s'
-                  % (merge_branch, full_dest))
-            print('skipping push.')
-            print('Please use `--destination %s` if this is intentional'
-                  % destination)
-            branch.uploaded = False
-            continue
+        if branch.project.dest_branch and not opt.dest_branch:
+            merge_branch = self._GetMergeBranch(
+                branch.project, local_branch=branch.name
+            )
 
-        self.Push(branch, dest_branch=destination, force=opt.force_push)
-        branch.uploaded = True
-      except UploadError as e:
-        branch.error = e
-        branch.uploaded = False
-        have_errors = True
+            full_dest = destination
+            if not full_dest.startswith(R_HEADS):
+                full_dest = R_HEADS + full_dest
 
-    print(file=sys.stderr)
-    print('----------------------------------------------------------------------', file=sys.stderr)
+            # If the merge branch of the local branch is different from
+            # the project's revision AND destination, this might not be
+            # intentional.
+            if (
+                merge_branch
+                and merge_branch != branch.project.revisionExpr
+                and merge_branch != full_dest
+            ):
+                print(
+                    f"For local branch {branch.name}: merge branch "
+                    f"{merge_branch} does not match destination branch "
+                    f"{destination}"
+                )
+                print("skipping push.")
+                print(
+                    f"Please use `--destination {destination}` if this "
+                    "is intentional"
+                )
+                branch.pushed = False
+                return
 
-    if have_errors:
-      for branch in todo:
-        if not branch.uploaded:
-          if len(str(branch.error)) <= 30:
-            fmt = ' (%s)'
-          else:
-            fmt = '\n       (%s)'
-          print(('[FAILED] %-15s %-15s' + fmt) % (
-                 branch.project.relpath + '/', \
-                 branch.name, \
-                 str(branch.error)),
-                 file=sys.stderr)
-      print()
+        branch.PushForReview(
+            people,
+            dryrun=opt.dryrun,
+            auto_topic=opt.auto_topic,
+            hashtags=hashtags,
+            labels=labels,
+            private=opt.private,
+            notify=notify,
+            wip=opt.wip,
+            ready=opt.ready,
+            dest_branch=destination,
+            validate_certs=opt.validate_certs,
+            push_options=opt.push_options,
+        )
 
-    for branch in todo:
-      if branch.uploaded:
-        print('[OK    ] %-15s %s' % (
-               branch.project.relpath + '/',
-               branch.name),
-               file=sys.stderr)
+        branch.pushed = True
 
-    if have_errors:
-      sys.exit(1)
+    def _PushAndReport(self, opt, todo, people):
+        have_errors = False
+        aggregate_errors = []
+        for branch in todo:
+            try:
+                self._PushBranch(opt, branch, people)
+            except (PushError, GitError) as e:
+                self.git_event_log.ErrorEvent(f"push error: {e}")
+                branch.error = e
+                aggregate_errors.append(e)
+                branch.pushed = False
+                have_errors = True
 
-  def Push(self, branch_base, branch=None,
-                      dest_branch=None, force=False):
-    """Pushs the named branch.
-    """
-    project = branch_base.project
-    if branch is None:
-      branch = project.CurrentBranch
-    if branch is None:
-      raise GitError('not currently on a branch')
+        print(file=sys.stderr)
+        print("-" * 70, file=sys.stderr)
 
-    branch = project.GetBranch(branch)
-    if not branch.LocalMerge:
-      raise GitError('branch %s does not track a remote' % branch.name)
+        if have_errors:
+            for branch in todo:
+                if not branch.pushed:
+                    if len(str(branch.error)) <= 30:
+                        fmt = " (%s)"
+                    else:
+                        fmt = "\n       (%s)"
+                    print(
+                        ("[FAILED] %-15s %-15s" + fmt)
+                        % (
+                            branch.project.RelPath(local=opt.this_manifest_only)
+                            + "/",
+                            branch.name,
+                            str(branch.error),
+                        ),
+                        file=sys.stderr,
+                    )
+            print()
 
-    if dest_branch is None:
-      dest_branch = project.dest_branch
-    if dest_branch is None:
-      dest_branch = branch.merge
-    if not dest_branch.startswith(R_HEADS):
-      dest_branch = R_HEADS + dest_branch
+        for branch in todo:
+            if branch.pushed:
+                print(
+                    "[OK    ] %-15s %s"
+                    % (
+                        branch.project.RelPath(local=opt.this_manifest_only)
+                        + "/",
+                        branch.name,
+                    ),
+                    file=sys.stderr,
+                )
 
-    if not branch.remote.projectname:
-      branch.remote.projectname = project.name
-      branch.remote.Save()
+        if have_errors:
+            raise PushExitError(aggregate_errors=aggregate_errors)
 
-    remote = branch.remote.name
-    cmd = ['push']
+    def _GetMergeBranch(self, project, local_branch=None):
+        if local_branch is None:
+            p = GitCommand(
+                project,
+                ["rev-parse", "--abbrev-ref", "HEAD"],
+                capture_stdout=True,
+                capture_stderr=True,
+            )
+            p.Wait()
+            local_branch = p.stdout.strip()
+        p = GitCommand(
+            project,
+            ["config", "--get", "branch.%s.merge" % local_branch],
+            capture_stdout=True,
+            capture_stderr=True,
+        )
+        p.Wait()
+        merge_branch = p.stdout.strip()
+        return merge_branch
 
-    if force:
-       cmd.append('--force')
-
-    cmd.append(remote)
-
-    if dest_branch.startswith(R_HEADS):
-      dest_branch = dest_branch[len(R_HEADS):]
-
-    push_type = 'heads'
-    ref_spec = '%s:refs/%s/%s' % (R_HEADS + branch.name, push_type,
-                                  dest_branch)
-    cmd.append(ref_spec)
-
-    if GitCommand(project, cmd, bare=True).Wait() != 0:
-      raise UploadError('Push failed')
-
-  def _GetMergeBranch(self, project):
-    p = GitCommand(project,
-                   ['rev-parse', '--abbrev-ref', 'HEAD'],
-                   capture_stdout = True,
-                   capture_stderr = True)
-    p.Wait()
-    local_branch = p.stdout.strip()
-    p = GitCommand(project,
-                   ['config', '--get', 'branch.%s.merge' % local_branch],
-                   capture_stdout = True,
-                   capture_stderr = True)
-    p.Wait()
-    merge_branch = p.stdout.strip()
-    return merge_branch
-
-  def Execute(self, opt, args):
-    self.opt = opt
-    project_list = self.GetProjects(args)
-    pending = []
-    branch = None
-
-    if opt.branch:
-      branch = opt.branch
-
-    for project in project_list:
-      if opt.current_branch:
-        cbr = project.CurrentBranch
-        up_branch = project.GetUploadableBranch(cbr)
-        if up_branch:
-          avail = [up_branch]
+    @staticmethod
+    def _GatherOne(opt, project):
+        """Figure out the push status for |project|."""
+        if opt.current_branch:
+            cbr = project.CurrentBranch
+            up_branch = project.GetPushableBranch(cbr)
+            avail = [up_branch] if up_branch else None
         else:
-          avail = None
-          print('ERROR: Current branch (%s) not pushable. '
-                'You may be able to type '
-                '"git branch --set-upstream-to m/master" to fix '
-                'your branch.' % str(cbr),
-                file=sys.stderr)
-      else:
-        avail = project.GetUploadableBranches(branch)
-      if avail:
-        pending.append((project, avail))
+            avail = project.GetPushableBranches(opt.branch)
+        return (project, avail)
 
-    if not pending:
-      print("no branches ready for upload", file=sys.stderr)
-      return
+    def Execute(self, opt, args):
+        projects = self.GetProjects(
+            args, all_manifests=not opt.this_manifest_only
+        )
 
-    if not opt.bypass_hooks:
-      hook = RepoHook('pre-push', self.manifest.repo_hooks_project,
-                      self.manifest.topdir,
-                      self.manifest.manifestProject.GetRemote('origin').url,
-                      abort_if_user_denies=True)
-      pending_proj_names = [project.name for (project, avail) in pending]
-      pending_worktrees = [project.worktree for (project, avail) in pending]
-      try:
-        hook.Run(user_allows_all_hooks=opt.allow_all_hooks, project_list=pending_proj_names,
-                 worktree_list=pending_worktrees)
-      except HookError as e:
-        print("ERROR: %s" % str(e), file=sys.stderr)
-        return
+        def _ProcessResults(_pool, _out, results):
+            pending = []
+            for result in results:
+                project, avail = result
+                if avail is None:
+                    logger.error(
+                        'repo: error: %s: Unable to push branch "%s". '
+                        "You might be able to fix the branch by running:\n"
+                        "  git branch --set-upstream-to m/%s",
+                        project.RelPath(local=opt.this_manifest_only),
+                        project.CurrentBranch,
+                        project.manifest.branch,
+                    )
+                elif avail:
+                    pending.append(result)
+            return pending
 
-    if not pending:
-      print("no branches ready for push", file=sys.stderr)
-    elif len(pending) == 1 and len(pending[0][1]) == 1:
-      self._SingleBranch(opt, pending[0][1][0])
-    else:
-      self._MultipleBranches(opt, pending)
+        pending = self.ExecuteInParallel(
+            opt.jobs,
+            functools.partial(self._GatherOne, opt),
+            projects,
+            callback=_ProcessResults,
+        )
+
+        if not pending:
+            if opt.branch is None:
+                logger.error("repo: error: no branches ready for push")
+            else:
+                logger.error(
+                    'repo: error: no branches named "%s" ready for push',
+                    opt.branch,
+                )
+            return 1
+
+        manifests = {
+            project.manifest.topdir: project.manifest
+            for (project, available) in pending
+        }
+        ret = 0
+        for manifest in manifests.values():
+            pending_proj_names = [
+                project.name
+                for (project, available) in pending
+                if project.manifest.topdir == manifest.topdir
+            ]
+            pending_worktrees = [
+                project.worktree
+                for (project, available) in pending
+                if project.manifest.topdir == manifest.topdir
+            ]
+            hook = RepoHook.FromSubcmd(
+                hook_type="pre-push",
+                manifest=manifest,
+                opt=opt,
+                abort_if_user_denies=True,
+            )
+            if not hook.Run(
+                project_list=pending_proj_names, worktree_list=pending_worktrees
+            ):
+                if LocalSyncState(manifest).IsPartiallySynced():
+                    logger.error(
+                        "Partially synced tree detected. Syncing all projects "
+                        "may resolve issues you're seeing."
+                    )
+                ret = 1
+        if ret:
+            return ret
+
+        reviewers = _SplitEmails(opt.reviewers) if opt.reviewers else []
+        cc = _SplitEmails(opt.cc) if opt.cc else []
+        people = (reviewers, cc)
+
+        if len(pending) == 1 and len(pending[0][1]) == 1:
+            self._SingleBranch(opt, pending[0][1][0], people)
+        else:
+            self._MultipleBranches(opt, pending, people)
