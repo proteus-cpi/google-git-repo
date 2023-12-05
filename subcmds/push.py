@@ -27,12 +27,9 @@ from hooks import RepoHook
 from git_refs import GitRefs, HEAD, R_HEADS, R_TAGS, R_PUB, R_M
 
 from pyversion import is_python3
-# pylint:disable=W0622
-if not is_python3():
-  input = raw_input
-else:
-  unicode = str
-# pylint:enable=W0622
+
+unicode = str
+
 
 UNUSUAL_COMMIT_THRESHOLD = 5
 
