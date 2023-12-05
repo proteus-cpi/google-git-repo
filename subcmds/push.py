@@ -26,8 +26,6 @@ from hooks import RepoHook
 
 from git_refs import GitRefs, HEAD, R_HEADS, R_TAGS, R_PUB, R_M
 
-from pyversion import is_python3
-
 unicode = str
 
 
