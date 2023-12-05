@@ -142,10 +142,10 @@ if __name__ == "__main__":
 #
 REPO_URL = os.environ.get("REPO_URL", None)
 if not REPO_URL:
-    REPO_URL = "https://gerrit.googlesource.com/git-repo"
+    REPO_URL = "https://github.com/proteus-cpi/google-git-repo.git"
 REPO_REV = os.environ.get("REPO_REV")
 if not REPO_REV:
-    REPO_REV = "stable"
+    REPO_REV = "develop"
 # URL to file bug reports for repo tool issues.
 BUG_URL = "https://issues.gerritcodereview.com/issues/new?component=1370071"
 
@@ -153,7 +153,7 @@ BUG_URL = "https://issues.gerritcodereview.com/issues/new?component=1370071"
 VERSION = (2, 40)
 
 # increment this if the MAINTAINER_KEYS block is modified
-KEYRING_VERSION = (2, 3)
+KEYRING_VERSION = (2, 4)
 
 # Each individual key entry is created by using:
 # gpg --armor --export keyid
@@ -229,6 +229,50 @@ MEkA/3uLmiwANOcgE0zB9zga0T/KkYhYOWFx7zRyDhrTf9spAPwIfSBOAGtwxjLO
 DCce5OaQJl/YuGHvXq2yx5h7T8pdAZ+PAJ4qfIk2LLSidsplTDXOKhOQAuOqUQCf
 cZ7aFsJF4PtcDrfdejyAxbtsSHI=
 =82Tj
+-----END PGP PUBLIC KEY BLOCK-----
+
+        Repo Maintainer <proteus.cpi.3@gmail.com>
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+ASujLV+i
+=ms0Z
 -----END PGP PUBLIC KEY BLOCK-----
 """
 
