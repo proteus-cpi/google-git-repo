@@ -1103,6 +1103,13 @@ class Project:
             if rb.commits:
                 return rb
         return None
+    
+    def GetPushableBranches(self, selected_branch=None):
+        """List any branches which can be Pushed."""
+        
+        ready = self.GetUploadableBranches(selected_branch)
+
+        return ready
 
     def PushUpstream(
         self,
