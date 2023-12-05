@@ -22,7 +22,7 @@ from command import InteractiveCommand
 from editor import Editor
 from error import GitError, HookError, UploadError
 from git_command import GitCommand
-from project import RepoHook
+from hooks import RepoHook
 
 from git_refs import GitRefs, HEAD, R_HEADS, R_TAGS, R_PUB, R_M
 
