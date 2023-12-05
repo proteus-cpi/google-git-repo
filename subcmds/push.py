@@ -108,16 +108,16 @@ def _SplitEmails(values):
 
 class Push(InteractiveCommand):
     COMMON = True
-    helpSummary = "Push changes for code review"
+    helpSummary = "Push changes to upstream"
     helpUsage = """
 %prog [--re --cc] [<project>]...
 """
     helpDescription = """
-The '%prog' command is used to send changes to the Gerrit Code
-Review system.  It searches for topic branches in local projects
-that have not yet been published for review.  If multiple topic
-branches are found, '%prog' opens an editor to allow the user to
-select which branches to push.
+The '%prog' command is used to push changes to the upstream server
+system.  It searches for topic branches in local projects that have 
+not yet been published.  If multiple topic branches are found, 
+'%prog' opens an editor to allow the user to select which branches 
+to push.
 
 '%prog' searches for pushable changes in all projects listed at
 the command line.  Projects can be specified either by name, or by
@@ -125,140 +125,11 @@ a relative or absolute path to the project's local directory. If no
 projects are specified, '%prog' will search for pushable changes
 in all projects listed in the manifest.
 
-If the --reviewers or --cc options are passed, those emails are
-added to the respective list of users, and emails are sent to any
-new users.  Users passed as --reviewers must already be registered
-with the code review system, or the push will fail.
-
-While most normal Gerrit options have dedicated command line options,
-direct access to the Gerit options is available via --push-options.
-This is useful when Gerrit has newer functionality that %prog doesn't
-yet support, or doesn't have plans to support.  See the Push Options
-documentation for more details:
-https://gerrit-review.googlesource.com/Documentation/user-push.html#push_options
-
 # Configuration
-
-review.URL.autopush:
-
-To disable the "Push ... (y/N)?" prompt, you can set a per-project
-or global Git configuration option.  If review.URL.autopush is set
-to "true" then repo will assume you always answer "y" at the prompt,
-and will not prompt you further.  If it is set to "false" then repo
-will assume you always answer "n", and will abort.
-
-review.URL.autoreviewer:
-
-To automatically append a user or mailing list to reviews, you can set
-a per-project or global Git option to do so.
-
-review.URL.autocopy:
-
-To automatically copy a user or mailing list to all pushed reviews,
-you can set a per-project or global Git option to do so. Specifically,
-review.URL.autocopy can be set to a comma separated list of reviewers
-who you always want copied on all pushs with a non-empty --re
-argument.
-
-review.URL.username:
-
-Override the username used to connect to Gerrit Code Review.
-By default the local part of the email address is used.
-
-The URL must match the review URL listed in the manifest XML file,
-or in the .git/config within the project.  For example:
-
-  [remote "origin"]
-    url = git://git.example.com/project.git
-    review = http://review.example.com/
-
-  [review "http://review.example.com/"]
-    autopush = true
-    autocopy = johndoe@company.com,my-team-alias@company.com
-
-review.URL.pushtopic:
-
-To add a topic branch whenever pushing a commit, you can set a
-per-project or global Git option to do so. If review.URL.pushtopic
-is set to "true" then repo will assume you always want the equivalent
-of the -t option to the repo command. If unset or set to "false" then
-repo will make use of only the command line option.
-
-review.URL.pushhashtags:
-
-To add hashtags whenever pushing a commit, you can set a per-project
-or global Git option to do so. The value of review.URL.pushhashtags
-will be used as comma delimited hashtags like the --hashtag option.
-
-review.URL.pushlabels:
-
-To add labels whenever pushing a commit, you can set a per-project
-or global Git option to do so. The value of review.URL.pushlabels
-will be used as comma delimited labels like the --label option.
-
-review.URL.pushnotify:
-
-Control e-mail notifications when pushing.
-https://gerrit-review.googlesource.com/Documentation/user-push.html#notify
-
-review.URL.pushwarningthreshold:
-
-Repo will warn you if you are attempting to push a large number
-of commits in one or more branches. By default, the threshold
-is five commits. This option allows you to override the warning
-threshold to a different value.
-
-# References
-
-Gerrit Code Review:  https://www.gerritcodereview.com/
-
 """
     PARALLEL_JOBS = DEFAULT_LOCAL_JOBS
 
     def _Options(self, p):
-        p.add_option(
-            "-t",
-            dest="auto_topic",
-            action="store_true",
-            help="send local branch name to Gerrit Code Review",
-        )
-        p.add_option(
-            "--hashtag",
-            "--ht",
-            dest="hashtags",
-            action="append",
-            default=[],
-            help="add hashtags (comma delimited) to the review",
-        )
-        p.add_option(
-            "--hashtag-branch",
-            "--htb",
-            action="store_true",
-            help="add local branch name as a hashtag",
-        )
-        p.add_option(
-            "-l",
-            "--label",
-            dest="labels",
-            action="append",
-            default=[],
-            help="add a label when pushing",
-        )
-        p.add_option(
-            "--re",
-            "--reviewers",
-            type="string",
-            action="append",
-            dest="reviewers",
-            help="request reviews from these people",
-        )
-        p.add_option(
-            "--cc",
-            type="string",
-            action="append",
-            dest="cc",
-            help="also send email to these email addresses",
-        )
         p.add_option(
             "--br",
             "--branch",
@@ -288,46 +159,6 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
             help=optparse.SUPPRESS_HELP,
         )
         p.add_option(
-            "--ne",
-            "--no-emails",
-            action="store_false",
-            dest="notify",
-            default=True,
-            help="do not send e-mails on push",
-        )
-        p.add_option(
-            "-p",
-            "--private",
-            action="store_true",
-            dest="private",
-            default=False,
-            help="push as a private change (deprecated; use --wip)",
-        )
-        p.add_option(
-            "-w",
-            "--wip",
-            action="store_true",
-            dest="wip",
-            default=False,
-            help="push as a work-in-progress change",
-        )
-        p.add_option(
-            "-r",
-            "--ready",
-            action="store_true",
-            default=False,
-            help="mark change as ready (clears work-in-progress setting)",
-        )
-        p.add_option(
-            "-o",
-            "--push-option",
-            type="string",
-            action="append",
-            dest="push_options",
-            default=[],
-            help="additional push options to transmit",
-        )
-        p.add_option(
             "-D",
             "--destination",
             "--dest",
@@ -335,7 +166,7 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
             action="store",
             dest="dest_branch",
             metavar="BRANCH",
-            help="submit for review on this target branch",
+            help="push this target branch",
         )
         p.add_option(
             "-n",
@@ -373,7 +204,7 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
         )
         RepoHook.AddOptionGroup(p, "pre-push")
 
-    def _SingleBranch(self, opt, branch, people):
+    def _SingleBranch(self, opt, branch):
         project = branch.project
         name = branch.name
         remote = project.GetBranch(name).remote
@@ -425,9 +256,9 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
         if not opt.yes and not _VerifyPendingCommits([branch]):
             _die("push aborted by user")
 
-        self._PushAndReport(opt, [branch], people)
+        self._PushAndReport(opt, [branch])
 
-    def _MultipleBranches(self, opt, pending, people):
+    def _MultipleBranches(self, opt, pending):
         projects = {}
         branches = {}
 
@@ -507,24 +338,6 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
 
         self._PushAndReport(opt, todo, people)
 
-    def _AppendAutoList(self, branch, people):
-        """
-        Appends the list of reviewers in the git project's config.
-        Appends the list of users in the CC list in the git project's config if
-        a non-empty reviewer list was found.
-        """
-        name = branch.name
-        project = branch.project
-
-        key = "review.%s.autoreviewer" % project.GetBranch(name).remote.review
-        raw_list = project.config.GetString(key)
-        if raw_list is not None:
-            people[0].extend([entry.strip() for entry in raw_list.split(",")])
-
-        key = "review.%s.autocopy" % project.GetBranch(name).remote.review
-        raw_list = project.config.GetString(key)
-        if raw_list is not None and len(people[0]) > 0:
-            people[1].extend([entry.strip() for entry in raw_list.split(",")])
 
     def _FindGerritChange(self, branch):
         last_pub = branch.project.WasPublished(branch.name)
@@ -538,10 +351,8 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
         except (AttributeError, IndexError):
             return ""
 
-    def _PushBranch(self, opt, branch, original_people):
+    def _PushBranch(self, opt, branch):
         """Push Branch."""
-        people = copy.deepcopy(original_people)
-        self._AppendAutoList(branch, people)
 
         # Check if there are local changes that may have been forgotten.
         changes = branch.project.UncommitedFiles()
@@ -643,7 +454,6 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
                 return
 
         branch.PushForReview(
-            people,
             dryrun=opt.dryrun,
             auto_topic=opt.auto_topic,
             hashtags=hashtags,
@@ -659,12 +469,12 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
 
         branch.pushed = True
 
-    def _PushAndReport(self, opt, todo, people):
+    def _PushAndReport(self, opt, todo):
         have_errors = False
         aggregate_errors = []
         for branch in todo:
             try:
-                self._PushBranch(opt, branch, people)
+                self._PushBranch(opt, branch)
             except (PushError, GitError) as e:
                 self.git_event_log.ErrorEvent(f"push error: {e}")
                 branch.error = e
@@ -813,11 +623,7 @@ Gerrit Code Review:  https://www.gerritcodereview.com/
         if ret:
             return ret
 
-        reviewers = _SplitEmails(opt.reviewers) if opt.reviewers else []
-        cc = _SplitEmails(opt.cc) if opt.cc else []
-        people = (reviewers, cc)
-
         if len(pending) == 1 and len(pending[0][1]) == 1:
-            self._SingleBranch(opt, pending[0][1][0], people)
+            self._SingleBranch(opt, pending[0][1][0])
         else:
-            self._MultipleBranches(opt, pending, people)
+            self._MultipleBranches(opt, pending)

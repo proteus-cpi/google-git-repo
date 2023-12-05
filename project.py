@@ -283,6 +283,36 @@ class ReviewableBranch:
             push_options=push_options,
         )
 
+    def PushUpstream(
+        self,
+        dryrun=False,
+        auto_topic=False,
+        hashtags=(),
+        labels=(),
+        private=False,
+        notify=None,
+        wip=False,
+        ready=False,
+        dest_branch=None,
+        validate_certs=True,
+        push_options=None,
+    ):
+        self.project.PushUpstream(
+            branch=self.name,
+            dryrun=dryrun,
+            auto_topic=auto_topic,
+            hashtags=hashtags,
+            labels=labels,
+            private=private,
+            notify=notify,
+            wip=wip,
+            ready=ready,
+            dest_branch=dest_branch,
+            validate_certs=validate_certs,
+            push_options=push_options,
+        )
+
+
     def GetPublishedRefs(self):
         refs = {}
         output = self.project.bare_git.ls_remote(
@@ -1074,10 +1104,9 @@ class Project:
                 return rb
         return None
 
-    def UploadForReview(
+    def PushUpstream(
         self,
         branch=None,
-        people=([], []),
         dryrun=False,
         auto_topic=False,
         hashtags=(),
