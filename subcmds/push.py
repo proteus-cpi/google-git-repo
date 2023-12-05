@@ -383,7 +383,7 @@ in all projects listed in the manifest.
       pending_proj_names = [project.name for (project, avail) in pending]
       pending_worktrees = [project.worktree for (project, avail) in pending]
       try:
-        hook.Run(opt.allow_all_hooks, project_list=pending_proj_names,
+        hook.Run(user_allows_all_hooks=opt.allow_all_hooks, project_list=pending_proj_names,
                  worktree_list=pending_worktrees)
       except HookError as e:
         print("ERROR: %s" % str(e), file=sys.stderr)
