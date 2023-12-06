@@ -145,7 +145,7 @@ if not REPO_URL:
     REPO_URL = "https://github.com/proteus-cpi/google-git-repo.git"
 REPO_REV = os.environ.get("REPO_REV")
 if not REPO_REV:
-    REPO_REV = "ft-push"
+    REPO_REV = "ft-ext-prj"
 # URL to file bug reports for repo tool issues.
 BUG_URL = "https://issues.gerritcodereview.com/issues/new?component=1370071"
 
