@@ -1497,8 +1497,18 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                         pass
                     if n.nodeName == "linkfile":
                         #self._ParseLinkFile(project, n)
-                        pass
+                        print("Parsed linkfile.")
 
+                p = self._projects[name]
+
+                # Add to the tasks
+                for n in node.childNodes:
+                    if n.nodeName == "copyfile":
+                        self._ParseCopyFile(p, n)
+                    if n.nodeName == "linkfile":
+                        self._ParseLinkFile(p, n)
+
+                # Process the changed attributes first
                 for p in self._projects[name]:
                     if path and p.relpath != path:
                         continue
@@ -1525,6 +1535,8 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                         ) = self.GetProjectPaths(name, dest_path, remote.name)
                         p.UpdatePaths(relpath, worktree, gitdir, objdir)
                         self._paths[p.relpath] = p
+
+
                 '''
                 # Code to parse "linkfile" in "extend-project"
                 for n in node.childNodes:
