@@ -1485,7 +1485,7 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                     )
 
                 # SKP
-                # TODO : (SKP) Implement copyfile / linkfile for extend-project
+                # DONE : (SKP) Implement copyfile / linkfile for extend-project
                 for n in node.childNodes:
                     if ((n.nodeName == "copyfile") or (n.nodeName == "linkfile")) and len(named_projects) > 1:
                         raise ManifestParseError(
@@ -1493,20 +1493,22 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                             "matching multiple projects: %s" % name
                         )
                     if n.nodeName == "copyfile":
-                        #self._ParseCopyFile(project, n)
-                        pass
+                        print("Parsed copyfile.")
+
                     if n.nodeName == "linkfile":
-                        #self._ParseLinkFile(project, n)
                         print("Parsed linkfile.")
 
+                # We have already checked that _projects[name] returns a single element array!
                 p = self._projects[name]
+                project = p[0]          # project now points to the one that is being extended
+
 
                 # Add to the tasks
                 for n in node.childNodes:
                     if n.nodeName == "copyfile":
-                        self._ParseCopyFile(p, n)
+                        self._ParseCopyFile(project, n)
                     if n.nodeName == "linkfile":
-                        self._ParseLinkFile(p, n)
+                        self._ParseLinkFile(project, n)
 
                 # Process the changed attributes first
                 for p in self._projects[name]:
@@ -1535,16 +1537,6 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                         ) = self.GetProjectPaths(name, dest_path, remote.name)
                         p.UpdatePaths(relpath, worktree, gitdir, objdir)
                         self._paths[p.relpath] = p
-
-
-                '''
-                # Code to parse "linkfile" in "extend-project"
-                for n in node.childNodes:
-                    if n.nodeName == "copyfile":
-                        self._ParseCopyFile(project, n)
-                    if n.nodeName == "linkfile":
-                        self._ParseLinkFile(project, n)
-                '''
 
             if node.nodeName == "repo-hooks":
                 # Only one project can be the hooks project
