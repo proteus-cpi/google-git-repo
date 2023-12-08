@@ -1509,6 +1509,14 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                         ) = self.GetProjectPaths(name, dest_path, remote.name)
                         p.UpdatePaths(relpath, worktree, gitdir, objdir)
                         self._paths[p.relpath] = p
+                '''
+                # Code to parse "linkfile" in "extend-project"
+                for n in node.childNodes:
+                    if n.nodeName == "copyfile":
+                        self._ParseCopyFile(project, n)
+                    if n.nodeName == "linkfile":
+                        self._ParseLinkFile(project, n)
+                '''
 
             if node.nodeName == "repo-hooks":
                 # Only one project can be the hooks project
