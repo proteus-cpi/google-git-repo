@@ -145,12 +145,12 @@ if not REPO_URL:
     REPO_URL = "https://github.com/proteus-cpi/google-git-repo.git"
 REPO_REV = os.environ.get("REPO_REV")
 if not REPO_REV:
-    REPO_REV = "develop"
+    REPO_REV = "main"
 # URL to file bug reports for repo tool issues.
 BUG_URL = "https://issues.gerritcodereview.com/issues/new?component=1370071"
 
 # increment this whenever we make important changes to this script
-VERSION = (2, 40)
+VERSION = (2, 41)
 
 # increment this if the MAINTAINER_KEYS block is modified
 KEYRING_VERSION = (2, 4)
