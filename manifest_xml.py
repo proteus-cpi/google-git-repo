@@ -1485,6 +1485,7 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                     )
 
                 # SKP
+                # TODO : (SKP) Implement copyfile / linkfile for extend-project
                 for n in node.childNodes:
                     if ((n.nodeName == "copyfile") or (n.nodeName == "linkfile")) and len(named_projects) > 1:
                         raise ManifestParseError(
