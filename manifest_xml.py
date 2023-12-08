@@ -1483,6 +1483,21 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                         "extend-project cannot use dest-path when "
                         "matching multiple projects: %s" % name
                     )
+
+                # SKP
+                for n in node.childNodes:
+                    if ((n.nodeName == "copyfile") or (n.nodeName == "linkfile")) and len(named_projects) > 1:
+                        raise ManifestParseError(
+                            "extend-project cannot use copyfile or linkfile when "
+                            "matching multiple projects: %s" % name
+                        )
+                    if n.nodeName == "copyfile":
+                        #self._ParseCopyFile(project, n)
+                        pass
+                    if n.nodeName == "linkfile":
+                        #self._ParseLinkFile(project, n)
+                        pass
+
                 for p in self._projects[name]:
                     if path and p.relpath != path:
                         continue
