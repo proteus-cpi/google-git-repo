@@ -9,5 +9,3 @@ __pycache__
 /.tox
 /.venv
 
-# PyCharm related
-/.idea/
