@@ -283,8 +283,9 @@ class ReviewableBranch:
             push_options=push_options,
         )
 
-    def PushUpstream(
+    def PushDirect(
         self,
+        people,
         dryrun=False,
         auto_topic=False,
         hashtags=(),
@@ -297,8 +298,9 @@ class ReviewableBranch:
         validate_certs=True,
         push_options=None,
     ):
-        self.project.PushUpstream(
+        self.project.PushDirect(
             branch=self.name,
+            people=people,
             dryrun=dryrun,
             auto_topic=auto_topic,
             hashtags=hashtags,
@@ -311,7 +313,6 @@ class ReviewableBranch:
             validate_certs=validate_certs,
             push_options=push_options,
         )
-
 
     def GetPublishedRefs(self):
         refs = {}

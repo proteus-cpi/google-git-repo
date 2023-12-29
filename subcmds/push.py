@@ -222,6 +222,7 @@ in all projects listed in the manifest.
             destination = (
                 opt.dest_branch or project.dest_branch or project.revisionExpr
             )
+            '''
             print(
                 "Push project %s/ to remote branch %s%s:"
                 % (
@@ -230,6 +231,7 @@ in all projects listed in the manifest.
                     " (private)" if opt.private else "",
                 )
             )
+            '''
             print(
                 "  branch %s (%2d commit%s, %s):"
                 % (
@@ -387,9 +389,11 @@ in all projects listed in the manifest.
 
         # Check if topic branches should be sent to the server during
         # push.
+        '''
         if opt.auto_topic is not True:
             key = "review.%s.pushtopic" % branch.project.remote.review
             opt.auto_topic = branch.project.config.GetBoolean(key)
+        '''
 
         def _ExpandCommaList(value):
             """Split |value| up into comma delimited entries."""
@@ -400,6 +404,7 @@ in all projects listed in the manifest.
                 if ret:
                     yield ret
 
+        '''
         # Check if hashtags should be included.
         key = "review.%s.pushhashtags" % branch.project.remote.review
         hashtags = set(_ExpandCommaList(branch.project.config.GetString(key)))
@@ -420,6 +425,7 @@ in all projects listed in the manifest.
         else:
             key = "review.%s.pushnotify" % branch.project.remote.review
             notify = branch.project.config.GetString(key)
+        '''
 
         destination = opt.dest_branch or branch.project.dest_branch
 
@@ -453,7 +459,7 @@ in all projects listed in the manifest.
                 branch.pushed = False
                 return
 
-        branch.PushForReview(
+        branch.PushDirect(
             dryrun=opt.dryrun,
             auto_topic=opt.auto_topic,
             hashtags=hashtags,
