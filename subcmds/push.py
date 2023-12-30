@@ -461,16 +461,16 @@ in all projects listed in the manifest.
 
         branch.PushDirect(
             dryrun=opt.dryrun,
-            auto_topic=opt.auto_topic,
-            hashtags=hashtags,
-            labels=labels,
-            private=opt.private,
-            notify=notify,
-            wip=opt.wip,
-            ready=opt.ready,
+            auto_topic=False,
+            hashtags=(),
+            labels=(),
+            private=False,
+            notify=None,
+            wip=False,
+            ready=False,
             dest_branch=destination,
             validate_certs=opt.validate_certs,
-            push_options=opt.push_options,
+            push_options=None,
         )
 
         branch.pushed = True

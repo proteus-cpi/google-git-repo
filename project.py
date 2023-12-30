@@ -285,7 +285,6 @@ class ReviewableBranch:
 
     def PushDirect(
         self,
-        people,
         dryrun=False,
         auto_topic=False,
         hashtags=(),
@@ -298,9 +297,8 @@ class ReviewableBranch:
         validate_certs=True,
         push_options=None,
     ):
-        self.project.PushDirect(
+        self.project.PushUpstream(
             branch=self.name,
-            people=people,
             dryrun=dryrun,
             auto_topic=auto_topic,
             hashtags=hashtags,
@@ -1139,6 +1137,8 @@ class Project:
                 "branch %s does not track a remote" % branch.name,
                 project=self.name,
             )
+
+        '''
         if not branch.remote.review:
             raise GitError(
                 "remote %s has no review url" % branch.remote.name,
@@ -1153,6 +1153,7 @@ class Project:
                     "CodeReview+1 or Verified-1",
                     project=self.name,
                 )
+        '''
 
         if dest_branch is None:
             dest_branch = self.dest_branch
@@ -1165,9 +1166,10 @@ class Project:
             branch.remote.projectname = self.name
             branch.remote.Save()
 
-        url = branch.remote.ReviewUrl(self.UserEmail, validate_certs)
+        url = branch.remote.url
+
         if url is None:
-            raise UploadError("review not configured", project=self.name)
+            raise UploadError("Push url not present", project=self.name)
         cmd = ["push", "--progress"]
         if dryrun:
             cmd.append("-n")
@@ -1191,6 +1193,8 @@ class Project:
             dest_branch = dest_branch[len(R_HEADS) :]
 
         ref_spec = f"{R_HEADS + branch.name}:refs/for/{dest_branch}"
+
+        '''
         opts = []
         if auto_topic:
             opts += ["topic=" + branch.name]
@@ -1210,6 +1214,9 @@ class Project:
             opts += ["ready"]
         if opts:
             ref_spec = ref_spec + "%" + ",".join(opts)
+            
+        '''
+
         cmd.append(ref_spec)
 
         GitCommand(self, cmd, bare=True, verify_command=True).Wait()
