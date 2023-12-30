@@ -1174,8 +1174,10 @@ class Project:
         if dryrun:
             cmd.append("-n")
 
+        '''
         if url.startswith("ssh://"):
             cmd.append("--receive-pack=gerrit receive-pack")
+        '''
 
         # This stops git from pushing all reachable annotated tags when
         # push.followTags is configured. Gerrit does not accept any tags
