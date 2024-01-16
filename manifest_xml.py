@@ -1492,11 +1492,14 @@ https://gerrit.googlesource.com/git-repo/+/HEAD/docs/manifest-format.md
                             "extend-project cannot use copyfile or linkfile when "
                             "matching multiple projects: %s" % name
                         )
+                        
+                    """                  
                     if n.nodeName == "copyfile":
                         print("Parsed copyfile.")
 
                     if n.nodeName == "linkfile":
-                        print("Parsed linkfile.")
+                        print("Parsed linkfile.") 
+                    """
 
                 # We have already checked that _projects[name] returns a single element array!
                 p = self._projects[name]
